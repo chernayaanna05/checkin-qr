@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Сканер QR</title>
+    <script src="//api.bitrix24.com/api/v1/"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    
+    <style>
+        body { font-family: sans-serif; text-align: center; background-color: #f0f2f5; padding: 10px; }
+        h2 { margin-bottom: 10px; color: #333; }
+        /* Окно камеры */
+        #reader { width: 100%; max-width: 400px; margin: 0 auto; border-radius: 10px; overflow: hidden; border: 2px solid #ccc; }
+        /* Блок статуса */
+        #status { margin-top: 20px; padding: 15px; background: white; border-radius: 8px; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .success { color: green; border: 1px solid green; }
+        .error { color: red; border: 1px solid red; }
+    </style>
+</head>
+<body>
+
+    <h2>Отметка прихода</h2>
+    <div id="reader"></div>
+    <div id="status">Разрешите доступ к камере...</div>
+
+    <script>
+        // ==========================================
+        // НАСТРОЙКИ (РЕДАКТИРОВАТЬ ЗДЕСЬ)
+        // ==========================================
+        
+        // Вставьте сюда ID списка из Этапа 1
+        const LIST_ID = 29; 
+        
+        // Кодовое слово, которое зашито в QR-коде
+        const SECRET_CODE = "OFFICE_START"; 
+        
+        // ==========================================
+
+        const html5QrCode = new Html5Qrcode("reader");
+
+        // Эта функция сработает, когда камера увидит QR-код
+        const qrCodeSuccessCallback = (decodedText, decodedResult) => {
+            if (decodedText === SECRET_CODE) {
+                // Если код верный, останавливаем камеру и отправляем данные
+                stopCameraAndSend();
+            } else {
+                setStatus("Неверный QR-код! Это не код офиса.", "error");
+            }
+        };
+
+        // Настройки камеры (fps - кадры в секунду)
+        const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+
+        // Запуск сканирования (facingMode: "environment" включает заднюю камеру)
+        html5QrCode.start({ facingMode: "environment" }, config, qrCodeSuccessCallback)
+        .catch(err => {
+            setStatus("Ошибка запуска камеры. Проверьте разрешения.", "error");
+        });
+
+        // Функция вывода сообщений на экран
+        function setStatus(text, type) {
+            const el = document.getElementById('status');
+            el.innerText = text;
+            el.className = type || '';
+        }
+
+        // Главная функция: запись в таблицу
+        function stopCameraAndSend() {
+            html5QrCode.stop().then(() => {
+                setStatus("QR принят! Отправка данных...");
+                
+                // Инициализация связи с Битриксом
+                BX24.init(function(){
+                    
+                    // 1. Узнаем, кто сканирует (текущий пользователь)
+                    BX24.callMethod('user.current', {}, function(resUser){
+                        if(resUser.error()) {
+                             setStatus('Не удалось определить пользователя.', 'error');
+                             return;
+                        }
+                        
+                        let user = resUser.data();
+                        let userName = user.NAME + ' ' + user.LAST_NAME;
+                        let now = new Date();
+                        // Дата и время строкой
+                        let timeString = now.toLocaleString("ru-RU"); 
+
+                        // 2. Добавляем строку в список (таблицу)
+                        // Мы запишем всё в поле NAME (Название), чтобы не усложнять код
+                        BX24.callMethod('lists.element.add', {
+                            'IBLOCK_TYPE_ID': 'lists', // Стандартный тип списка
+                            'IBLOCK_ID': LIST_ID,      // Ваш ID списка
+                            'ELEMENT_CODE': Date.now(), // Технический уникальный код
+                            'FIELDS': {
+                                'NAME': userName + ' — ' + timeString // Что будет написано в строке
+                            }
+                        }, function(resAdd) {
+                            if(resAdd.error()) {
+                                console.error(resAdd.error());
+                                setStatus('Ошибка записи! Проверьте, дали ли вы приложению права на "Списки".', 'error');
+                            } else {
+                                setStatus('✅ Успешно! ' + userName + ', вы отмечены в ' + timeString, 'success');
+                            }
+                        });
+                    });
+                });
+            }).catch(console.error);
+        }
+    </script>
+</body>
+</html>
